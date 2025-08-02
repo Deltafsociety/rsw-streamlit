@@ -73,7 +73,7 @@ def get_soup_silent(url, is_xml=False, delay_seconds=1):
     except Exception as e:
         return None
 
-# --- Data Fetching Functions ---
+# --- Data Fetching Functions (removed all direct Streamlit UI calls) ---
 
 @st.cache_data(ttl=MAX_REPORT_AGE_SECONDS)
 def fetch_ofac_vessels():
@@ -380,37 +380,31 @@ def process_all_data():
     st.session_state.global_sanctions_data_store = fetched_data
     st.session_state.report_generated = True
 
-# --- Helper for My Vessels Persistence ---
-def load_my_vessels_from_file(file_path):
-    vessels = []
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, mode='r', newline='', encoding='utf-8') as file:
-                reader = csv.DictReader(file)
-                if reader.fieldnames:
-                    reader.fieldnames = [field.strip() for field in reader.fieldnames]
-                
-                if 'name' in reader.fieldnames and 'imo' in reader.fieldnames:
-                    for row in reader:
-                        cleaned_row = {k.strip(): v for k, v in row.items()}
-                        vessels.append({'name': cleaned_row['name'], 'imo': cleaned_row['imo']})
-                else:
-                    st.warning(f"CSV headers missing 'name' or 'imo' in {file_path}. Found: {reader.fieldnames}")
-        except Exception as e:
-            st.error(f"Error loading vessels from {file_path}: {e}")
-    return vessels
+# --- My Vessels Data Handling Functions ---
+def clear_vessel_list():
+    """Clears the vessel list in session state."""
+    st.session_state.my_vessels_df = pd.DataFrame(columns=['Vessel Name', 'IMO Number'])
 
-def save_my_vessels_to_file(vessels, file_path):
+def load_vessels_from_uploaded_file(uploaded_file):
+    """Loads a CSV file into the session state DataFrame."""
     try:
-        with open(file_path, mode='w', newline='', encoding='utf-8') as file:
-            fieldnames = ['name', 'imo']
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(vessels)
-        st.success(f"Saved {len(vessels)} vessels to {file_path}")
-    except Exception as e:
-        st.error(f"Error saving vessels to {file_path}: {e}")
+        df_uploaded_vessels = pd.read_csv(uploaded_file)
+        
+        name_col = next((col for col in df_uploaded_vessels.columns if 'name' in col.lower().strip()), None)
+        imo_col = next((col for col in df_uploaded_vessels.columns if 'imo' in col.lower().strip()), None)
 
+        if name_col and imo_col:
+            df_uploaded_vessels = df_uploaded_vessels[[name_col, imo_col]].copy()
+            df_uploaded_vessels.rename(columns={name_col: "Vessel Name", imo_col: "IMO Number"}, inplace=True)
+            df_uploaded_vessels['IMO Number'] = df_uploaded_vessels['IMO Number'].astype(str).str.replace(r'\D', '', regex=True)
+            df_uploaded_vessels = df_uploaded_vessels[df_uploaded_vessels['IMO Number'].str.match(r'^\d{7}$')]
+            
+            st.session_state.my_vessels_df = df_uploaded_vessels
+            st.success(f"Loaded {len(st.session_state.my_vessels_df)} vessels from '{uploaded_file.name}'.")
+        else:
+            st.error(f"The uploaded CSV must contain columns for 'name' and 'imo'. Found columns: {df_uploaded_vessels.columns.tolist()}")
+    except Exception as e:
+        st.error(f"Error processing the uploaded file: {e}")
 
 # --- Helper for User Uploaded Sanctions Data Persistence ---
 def save_user_uploaded_sanctions_to_file(df, file_path):
@@ -438,7 +432,7 @@ st.set_page_config(layout="wide", page_title="Royal Sanction Watch", page_icon="
 
 st.title("⚓ Royal Classification Society: Vessel Sanction & Data Tool")
 
-# Initialize session state variables
+# Initialize all session state variables at the top
 if 'global_sanctions_data_store' not in st.session_state:
     st.session_state.global_sanctions_data_store = {
         "OFAC_Vessels": pd.DataFrame(),
@@ -446,9 +440,9 @@ if 'global_sanctions_data_store' not in st.session_state:
         "EU_DMA_Vessels": pd.DataFrame(),
         "UANI_Vessels_Tracked": pd.DataFrame()
     }
-    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame() # No file persistence for uploaded sanctions data
-if 'my_vessels_df' not in st.session_state:
-    st.session_state.my_vessels_df = pd.DataFrame(columns=['Vessel Name', 'IMO Number'])
+    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame()
+if 'my_vessels_data' not in st.session_state:
+    st.session_state.my_vessels_data = []
 if 'report_generated' not in st.session_state:
     st.session_state.report_generated = False
 if 'logs' not in st.session_state:
@@ -616,14 +610,12 @@ with tab3:
     st.header("My Vessels List")
     st.info("Upload a CSV file or add a vessel manually. The list will be cleared if you close the app.")
 
-    # File uploader to read the CSV
     uploaded_my_vessels_file = st.file_uploader("Upload a CSV file with 'name' and 'imo' columns", type=["csv"], key="my_vessels_uploader")
     if uploaded_my_vessels_file is not None:
         try:
             with st.spinner("Loading file..."):
                 df_uploaded_vessels = pd.read_csv(uploaded_my_vessels_file)
             
-            # Use robust column finding logic
             name_col = next((col for col in df_uploaded_vessels.columns if 'name' in col.lower().strip()), None)
             imo_col = next((col for col in df_uploaded_vessels.columns if 'imo' in col.lower().strip()), None)
 
@@ -633,7 +625,6 @@ with tab3:
                 df_uploaded_vessels['IMO Number'] = df_uploaded_vessels['IMO Number'].astype(str).str.replace(r'\D', '', regex=True)
                 df_uploaded_vessels = df_uploaded_vessels[df_uploaded_vessels['IMO Number'].str.match(r'^\d{7}$')]
                 
-                # Use a unique key for the file to prevent re-initialization
                 st.session_state.my_vessels_data = df_uploaded_vessels.to_dict('records')
                 st.success(f"Loaded {len(st.session_state.my_vessels_data)} vessels from '{uploaded_my_vessels_file.name}'.")
             else:
@@ -641,10 +632,8 @@ with tab3:
         except Exception as e:
             st.error(f"Error processing the uploaded file: {e}")
         
-        # This rerun is important to refresh the display after the upload
         st.rerun()
 
-    # Manual Add Vessel section
     st.subheader("Add New Vessel Manually")
     with st.form("add_vessel_form", clear_on_submit=True):
         new_vessel_name = st.text_input("Vessel Name")
@@ -665,10 +654,9 @@ with tab3:
             else:
                 st.error("Both Vessel Name and IMO Number are required.")
 
-    # Display and manage vessels
     if st.session_state.my_vessels_data:
         my_vessels_df = pd.DataFrame(st.session_state.my_vessels_data)
-
+        
         st.info(f"Displaying {len(my_vessels_df)} vessels from the current list.")
         
         if st.button("Check Sanctions Status & Update List"):
@@ -691,7 +679,6 @@ with tab3:
                                 sanctioned_sources.setdefault(imo_val_cleaned, []).append(row['Source'])
                 st.info(f"Consolidated {len(sanctioned_imos)} unique sanctioned IMOs.")
                 
-                # Perform the check and update the DataFrame
                 my_vessels_df['Sanctioned?'] = my_vessels_df['IMO Number'].astype(str).apply(
                     lambda x: 'Yes' if x in sanctioned_imos else 'No'
                 )
@@ -699,22 +686,21 @@ with tab3:
                     lambda x: ', '.join(sorted(list(set(sanctioned_sources.get(x, [])))))
                 )
                 
-                # Update the session state with the new DataFrame containing the sanctions info
-                st.session_state.my_vessels_df = my_vessels_df
+                st.session_state.my_vessels_data = my_vessels_df.to_dict('records')
                 st.success("Sanction check complete. Results are shown in the table below.")
                 st.rerun()
 
-        if not st.session_state.my_vessels_df.empty:
+        if not my_vessels_df.empty:
             def highlight_sanctioned(row):
                 if 'Sanctioned?' in row and row['Sanctioned?'] == 'Yes':
                     return ['background-color: #FFCCCC; color: #CC0000; font-weight: bold'] * len(row)
                 return [''] * len(row)
             
-            styled_df = st.session_state.my_vessels_df.style.apply(highlight_sanctioned, axis=1)
+            styled_df = my_vessels_df.style.apply(highlight_sanctioned, axis=1)
             
             st.dataframe(styled_df, use_container_width=True)
             
-            csv_export_my_vessels = st.session_state.my_vessels_df.to_csv(index=False).encode('utf-8')
+            csv_export_my_vessels = my_vessels_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="Export My Vessels List as CSV",
                 data=csv_export_my_vessels,
