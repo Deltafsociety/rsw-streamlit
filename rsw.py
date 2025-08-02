@@ -446,7 +446,7 @@ if 'global_sanctions_data_store' not in st.session_state:
         "EU_DMA_Vessels": pd.DataFrame(),
         "UANI_Vessels_Tracked": pd.DataFrame()
     }
-    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame() # No file persistence for uploaded sanctions data
+    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame()
 if 'my_vessels_df' not in st.session_state:
     st.session_state.my_vessels_df = pd.DataFrame(columns=['Vessel Name', 'IMO Number'])
 if 'report_generated' not in st.session_state:
@@ -751,11 +751,11 @@ with tab4:
     * Click 'Clear All Fetched Sanctions Data' to remove all fetched data from memory and the local cache.
 
     **3. My Vessels Tab:**
-    * The 'My Vessels' tab is now simplified to a direct upload-and-display workflow.
-    * Use the **'Upload a CSV file'** button to select your vessel list. The app will immediately process it and display it in a table below.
-    * The list is **not saved** between sessions. You must re-upload the file each time you use the app.
-    * The 'Check Sanctions Status & Update List' button compares your vessels against the most recently fetched sanctions data, highlighting any matches.
-    * 'Export My Vessels List as CSV' allows you to download the currently displayed list.
+    * **Upload:** Use the 'Upload a CSV file' button to load your list.
+    * **Manual Entry:** Use the form to manually add a new vessel one by one.
+    * **Check:** Click 'Check Sanctions Status & Update List' to compare your vessels against the latest sanctions data. The result will be added as new columns in the table.
+    * **Export:** Click 'Export My Vessels List as CSV' to download the final list, including the sanctions status.
+    * **Note:** The list is **not saved** between sessions. You must re-upload or manually re-enter your data each time you use the app.
 
     ### Contact Information:
     For technical assistance or inquiries, please contact: `it@rcsclass.org`
