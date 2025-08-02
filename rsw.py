@@ -260,7 +260,7 @@ def fetch_uani_vessels():
                 df_from_bundled["Source"] = "UANI (Bundled CSV)"
                 df_from_bundled.dropna(subset=["IMO Number"], inplace=True)
                 df_from_bundled["IMO Number"] = df_from_bundled["IMO Number"].astype(str).apply(lambda x: re.sub(r'\D', '', str(x)))
-                df_from_bundled = df_from_bundled[df_from_bundled['IMO Number'].str.match(r'^\d{7}$')]
+                df_from_bundled = df_from_bundled[df['IMO Number'].str.match(r'^\d{7}$')]
                 st.session_state.logs.append(f"SUCCESS: UANI: Loaded {len(df_from_bundled)} vessels from bundled CSV.")
                 return df_from_bundled # Return immediately if successful
             else:
@@ -686,13 +686,21 @@ with tab3:
 
     # Display and manage vessels
     st.subheader("Your Saved Vessels")
+    
     if st.session_state.my_vessels_data:
         my_vessels_df = pd.DataFrame(st.session_state.my_vessels_data)
         
+        # Ensure the columns for status are there
         my_vessels_df['Sanctioned?'] = 'No'
         my_vessels_df['Sources'] = ''
 
         search_term = st.text_input("Search Vessels (Name/IMO):", key="my_vessels_search")
+
+        # Added 'Reset Display' button to clear search filter
+        if st.button("Reset Display"):
+            st.session_state['my_vessels_search'] = ''
+            st.rerun()
+
         if search_term:
             search_term_lower = search_term.lower()
             my_vessels_df = my_vessels_df[
@@ -752,7 +760,7 @@ with tab3:
                     return ['background-color: #FFCCCC; color: #CC0000; font-weight: bold'] * len(row)
                 return [''] * len(row)
             
-            with st.spinner("Displaying vessels..."):
+            with st.spinner(f"Displaying {len(my_vessels_df)} vessels..."):
                 st.info(f"Displaying {len(my_vessels_df)} vessels.")
                 styled_df = my_vessels_df.style.apply(highlight_sanctioned, axis=1)
                 edited_df = st.data_editor(styled_df, num_rows="dynamic", use_container_width=True)
