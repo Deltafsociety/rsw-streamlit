@@ -73,7 +73,7 @@ def get_soup_silent(url, is_xml=False, delay_seconds=1):
     except Exception as e:
         return None
 
-# --- Data Fetching Functions (removed all direct Streamlit UI calls) ---
+# --- Data Fetching Functions ---
 
 @st.cache_data(ttl=MAX_REPORT_AGE_SECONDS)
 def fetch_ofac_vessels():
@@ -215,7 +215,7 @@ def fetch_dma_vessels():
         df["Source"] = "EU (DMA)"
         df.dropna(subset=["IMO Number"], inplace=True)
         df["IMO Number"] = df["IMO Number"].astype(str).apply(lambda x: re.sub(r'\D', '', str(x)))
-        df = df[df['IMO Number'].str.match(r'^\d{7}$')]
+        df = df[df['IMO Number'].astype(str).str.contains(r'^\d{7}$')]
         
         return df
     except requests.exceptions.RequestException as e:
@@ -479,18 +479,15 @@ with tab1:
 with tab2:
     st.header("Sanctions Report Viewer")
     
-    # Updated condition: Check if ANY dataframes in the global store are not empty
     if not any(df is not None and not df.empty for df in st.session_state.global_sanctions_data_store.values()):
         st.info("No sanctions report data available yet. Please generate a report in the 'Sanctions Report Generator' tab.")
     else:
         st.markdown("View the fetched sanctions data here.")
 
-        # Prepare a combined and sanctioned-checked DataFrame for display
         combined_df = pd.DataFrame()
         sanctioned_imos = set()
         sanctioned_sources = {}
 
-        # First, consolidate all sanctions data into a single source set
         with st.spinner("Consolidating data for viewer..."):
             all_dfs_raw = [df for df in st.session_state.global_sanctions_data_store.values() if df is not None and not df.empty]
             
@@ -502,7 +499,6 @@ with tab2:
                         sanctioned_imos.add(imo_val_cleaned)
                         sanctioned_sources.setdefault(imo_val_cleaned, []).append(row['Source'])
         
-        # Now, prepare the dataframes for final display
         df_display_store = {}
         for source_name, df in st.session_state.global_sanctions_data_store.items():
             if df is not None and not df.empty and 'IMO Number' in df.columns:
@@ -517,17 +513,14 @@ with tab2:
             else:
                 df_display_store[source_name] = pd.DataFrame()
 
-        # Finally, build the "All Data" view using the processed dataframes
         all_dfs_processed = [df.assign(Source=source_name) for source_name, df in df_display_store.items() if not df.empty]
         if all_dfs_processed:
             combined_df = pd.concat(all_dfs_processed, ignore_index=True)
             combined_df.drop_duplicates(subset=['IMO Number'], keep='first', inplace=True)
-            # Reorder columns for a better display
             combined_df = combined_df[['Vessel Name', 'IMO Number', 'Sanctioned?', 'Sources']].sort_values(by='Vessel Name').reset_index(drop=True)
         else:
             combined_df = pd.DataFrame()
 
-        # Create options for the selectbox
         source_options = ["All Data (Combined)"] + [k for k, v in st.session_state.global_sanctions_data_store.items() if v is not None and not v.empty]
         
         selected_source_key = st.selectbox("Select Data Source to View:", source_options)
@@ -558,24 +551,14 @@ with tab2:
         try:
             if uploaded_external_file.name.endswith('.csv'):
                 df_loaded_external = pd.read_csv(uploaded_external_file)
-            else: # xlsx or xls
+            else:
                 df_loaded_external = pd.read_excel(uploaded_external_file)
             
             original_columns = list(df_loaded_external.columns)
             cleaned_columns_map = {str(col).strip().lower(): col for col in original_columns}
             
-            imo_col_key = None
-            name_col_key = None
-
-            for pattern in ['imo', 'imo number', 'imo no']:
-                if pattern in cleaned_columns_map:
-                    imo_col_key = cleaned_columns_map[pattern]
-                    break
-            
-            for pattern in ['vessel name', 'vessel', 'name']:
-                if pattern in cleaned_columns_map:
-                    name_col_key = cleaned_columns_map[pattern]
-                    break
+            imo_col_key = next((col for col in cleaned_columns_map if 'imo' in col), None)
+            name_col_key = next((col for col in cleaned_columns_map if 'vessel' in col or 'name' in col), None)
 
             if imo_col_key and name_col_key:
                 df_external_processed = df_loaded_external[[name_col_key, imo_col_key]].copy()
@@ -587,7 +570,7 @@ with tab2:
                 
                 st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = df_external_processed
                 st.success(f"External sanctions data loaded from '{uploaded_external_file.name}'. Refreshing display.")
-                st.rerun() 
+                st.rerun()
             else:
                 st.error(f"Uploaded file '{uploaded_external_file.name}' missing 'IMO' or 'Vessel Name' columns after cleaning. Found headers: {df_loaded_external.columns.tolist()}")
         except Exception as e:
@@ -605,12 +588,15 @@ with tab2:
         st.success("All fetched sanctions data cleared from memory.")
         st.rerun()
 
-
 with tab3:
     st.header("My Vessels List")
     st.info("Upload a CSV file or add a vessel manually. The list will be cleared if you close the app.")
+    
+    if st.button("Clear My Vessel List"):
+        st.session_state.my_vessels_data = []
+        st.rerun()
 
-    uploaded_my_vessels_file = st.file_uploader("Upload a CSV file with 'name' and 'imo' columns", type=["csv"], key="my_vessels_uploader")
+    uploaded_my_vessels_file = st.file_uploader("Upload a CSV file with 'Vessel Name' and 'IMO Number' columns", type=["csv"], key="my_vessels_uploader")
     if uploaded_my_vessels_file is not None:
         try:
             with st.spinner("Loading file..."):
