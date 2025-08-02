@@ -21,7 +21,6 @@ UK_SANCTIONS_PUBLICATION_PAGE_URL = "https://www.gov.uk/government/publications/
 DMA_XLSX_URL = "https://www.dma.dk/Media/638834044135010725/2025118019-7%20Importversion%20-%20List%20of%20EU%20designated%20vessels%20(20-05-2025)%203010691_2_0.XLSX"
 UANI_WEBSCRAPE_URL = "https://www.unitedagainstnucleariran.com/blog/switch-list-tankers-shift-from-carrying-iranian-oil-to-russian-oil"
 UANI_BUNDLED_CSV_NAME = "UANI_Switch_List_Bundled.csv" # Name of the CSV file to bundle for UANI
-MY_VESSELS_CSV_NAME = "my_vessels.csv"
 USER_UPLOADED_SANCTIONS_CACHE_NAME = "user_uploaded_sanctions_cache.csv" # For general user uploads
 
 # Define common column patterns for numerical identifiers like IMO numbers
@@ -380,39 +379,6 @@ def process_all_data():
     st.session_state.global_sanctions_data_store = fetched_data
     st.session_state.report_generated = True
 
-# --- Helper for My Vessels Persistence ---
-def load_my_vessels_from_file(file_path):
-    vessels = {}
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, mode='r', newline='', encoding='utf-8') as file:
-                reader = csv.DictReader(file)
-                if reader.fieldnames:
-                    reader.fieldnames = [field.strip() for field in reader.fieldnames]
-                
-                if 'name' in reader.fieldnames and 'imo' in reader.fieldnames:
-                    for row in reader:
-                        cleaned_row = {k.strip(): v for k, v in row.items()}
-                        vessels[cleaned_row['imo']] = cleaned_row['name']
-                else:
-                    st.warning(f"CSV headers missing 'name' or 'imo' in {file_path}. Found: {reader.fieldnames}")
-        except Exception as e:
-            st.error(f"Error loading vessels from {file_path}: {e}")
-    return vessels
-
-def save_my_vessels_to_file(vessels, file_path):
-    try:
-        with open(file_path, mode='w', newline='', encoding='utf-8') as file:
-            fieldnames = ['name', 'imo']
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writeheader()
-            for imo, name in vessels.items():
-                writer.writerow({'name': name, 'imo': imo})
-        st.success(f"Saved {len(vessels)} vessels to {file_path}")
-    except Exception as e:
-        st.error(f"Error saving vessels to {file_path}: {e}")
-
-
 # --- Helper for User Uploaded Sanctions Data Persistence ---
 def save_user_uploaded_sanctions_to_file(df, file_path):
     """Saves a DataFrame to a specified CSV for user uploads for persistence."""
@@ -434,7 +400,6 @@ def load_user_uploaded_sanctions_from_file(file_path):
     return pd.DataFrame() # Return empty DataFrame if not found or error
 
 # --- Streamlit App Structure ---
-
 st.set_page_config(layout="wide", page_title="Royal Sanction Watch", page_icon=":anchor:")
 
 st.title("⚓ Royal Classification Society: Vessel Sanction & Data Tool")
@@ -449,9 +414,21 @@ if 'global_sanctions_data_store' not in st.session_state:
     }
     st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = load_user_uploaded_sanctions_from_file(USER_UPLOADED_SANCTIONS_CACHE_NAME)
 
-# --- REVERTED: Initialize my_vessels_data with local file persistence ---
+# --- NEW: Initialize my_vessels_data from st.secrets ---
 if 'my_vessels_data' not in st.session_state:
-    st.session_state.my_vessels_data = {}
+    try:
+        # Load from secrets if available, otherwise start with an empty dictionary
+        if 'my_vessels' in st.secrets:
+            # We assume secrets is a JSON string of a dictionary
+            st.session_state.my_vessels_data = json.loads(st.secrets['my_vessels'])
+            st.info(f"Loaded {len(st.session_state.my_vessels_data)} vessels from `st.secrets`.")
+        else:
+            st.session_state.my_vessels_data = {}
+            st.warning("No vessel data found in `st.secrets`. The list is currently empty.")
+    except Exception as e:
+        st.error(f"Error loading vessels from `st.secrets`: {e}. Please check your secrets format.")
+        st.session_state.my_vessels_data = {}
+
 if 'report_generated' not in st.session_state:
     st.session_state.report_generated = False
 if 'logs' not in st.session_state:
@@ -633,23 +610,23 @@ with tab2:
 
 
 with tab3:
-    st.header("My Vessels List")
-    st.warning("Your vessel list is stored as a dictionary in memory. Use the buttons below to save and load it manually.")
+    st.header("My Vessels List (Persistent via `st.secrets`)")
+    st.info("To add or remove vessels permanently, you must manually update the `my_vessels` dictionary in your app's `st.secrets`.")
+    st.warning("Changes made directly in the app are temporary and will be lost on refresh.")
 
-    # Input to add a new vessel
-    st.subheader("Add New Vessel")
+    # Input to add a new vessel (temporary)
+    st.subheader("Add New Vessel (Current Session Only)")
     with st.form("add_vessel_form", clear_on_submit=True):
         new_vessel_name = st.text_input("Vessel Name")
         new_vessel_imo = st.text_input("IMO Number (7 digits)")
-        add_vessel_submitted = st.form_submit_button("Add Vessel")
+        add_vessel_submitted = st.form_submit_button("Add Vessel to Current Session")
 
         if add_vessel_submitted:
             if new_vessel_name and new_vessel_imo:
                 if re.fullmatch(r'^\d{7}$', new_vessel_imo):
                     if new_vessel_imo not in st.session_state.my_vessels_data:
                         st.session_state.my_vessels_data[new_vessel_imo] = new_vessel_name
-                        st.success(f"Added vessel: {new_vessel_name} ({new_vessel_imo})")
-                        st.rerun()
+                        st.success(f"Added vessel: {new_vessel_name} ({new_vessel_imo}). Note: This is temporary!")
                     else:
                         st.warning(f"Vessel with IMO Number {new_vessel_imo} already exists.")
                 else:
@@ -657,51 +634,7 @@ with tab3:
             else:
                 st.error("Both Vessel Name and IMO Number are required.")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Load a Saved List")
-        uploaded_my_vessels_file = st.file_uploader("Upload a CSV or JSON file", type=["csv", "json"], key="my_vessels_uploader")
-        if uploaded_my_vessels_file is not None:
-            try:
-                with st.spinner("Loading file..."):
-                    if uploaded_my_vessels_file.name.endswith('.csv'):
-                        df_uploaded_vessels = pd.read_csv(uploaded_my_vessels_file)
-                        name_col = next((col for col in df_uploaded_vessels.columns if 'name' in col.lower().strip()), None)
-                        imo_col = next((col for col in df_uploaded_vessels.columns if 'imo' in col.lower().strip()), None)
-                        if name_col and imo_col:
-                            new_vessels_list = {str(row[imo_col]): str(row[name_col]) for _, row in df_uploaded_vessels.iterrows() if re.fullmatch(r'^\d{7}$', str(row[imo_col]).strip())}
-                            st.session_state.my_vessels_data.update(new_vessels_list)
-                            st.success(f"Loaded {len(new_vessels_list)} vessels from the uploaded CSV.")
-                        else:
-                            st.error(f"The uploaded CSV must contain columns for 'name' and 'imo'. Found columns: {df_uploaded_vessels.columns.tolist()}")
-                    elif uploaded_my_vessels_file.name.endswith('.json'):
-                        new_vessels_dict = json.load(uploaded_my_vessels_file)
-                        st.session_state.my_vessels_data.update(new_vessels_dict)
-                        st.success(f"Loaded {len(new_vessels_dict)} vessels from the uploaded JSON file.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error processing the uploaded file: {e}")
-    with col2:
-        st.subheader("Save Your List")
-        if st.session_state.my_vessels_data:
-            csv_export_my_vessels = pd.DataFrame(st.session_state.my_vessels_data.items(), columns=['imo', 'name']).to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Download My Vessels List (CSV)",
-                data=csv_export_my_vessels,
-                file_name=f"my_vessels_list_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                key="export_my_vessels_csv_btn"
-            )
-            json_export_my_vessels = json.dumps(st.session_state.my_vessels_data, indent=4).encode('utf-8')
-            st.download_button(
-                label="Download My Vessels List (JSON)",
-                data=json_export_my_vessels,
-                file_name=f"my_vessels_list_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                mime="application/json",
-                key="export_my_vessels_json_btn"
-            )
-
-    # Display and manage vessels
+    # Display the current vessels from session state
     st.subheader("Your Current Vessel List")
     
     if st.session_state.my_vessels_data:
@@ -710,11 +643,6 @@ with tab3:
         my_vessels_df.reset_index(inplace=True)
         my_vessels_df.rename(columns={'name': 'Vessel Name', 'imo': 'IMO Number'}, inplace=True)
         
-        if st.button("Clear All Vessels from List"):
-            st.session_state.my_vessels_data = {}
-            st.success("Vessel list cleared.")
-            st.rerun()
-            
         st.info(f"Displaying {len(my_vessels_df)} vessels.")
 
         if st.button("Check Sanctions Status & Update List"):
@@ -741,7 +669,6 @@ with tab3:
                 
                 st.success("Sanction check complete.")
         
-        # Display the table with highlighting
         def highlight_sanctioned(row):
             if 'Sanctioned?' in row and row['Sanctioned?'] == 'Yes':
                 return ['background-color: #FFCCCC; color: #CC0000; font-weight: bold'] * len(row)
@@ -749,8 +676,30 @@ with tab3:
         
         styled_df = my_vessels_df.style.apply(highlight_sanctioned, axis=1)
         st.dataframe(styled_df, use_container_width=True)
+
+        col_export_json, col_export_csv = st.columns(2)
+        with col_export_json:
+            json_export_my_vessels = json.dumps(st.session_state.my_vessels_data, indent=4).encode('utf-8')
+            st.download_button(
+                label="Download Current List (JSON)",
+                data=json_export_my_vessels,
+                file_name=f"my_vessels_list_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                key="export_my_vessels_json_btn",
+                help="Download your list to save it for later."
+            )
+        with col_export_csv:
+            csv_export_my_vessels = pd.DataFrame(st.session_state.my_vessels_data.items(), columns=['imo', 'name']).to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download Current List (CSV)",
+                data=csv_export_my_vessels,
+                file_name=f"my_vessels_list_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                key="export_my_vessels_csv_btn",
+                help="Download your list to save it for later."
+            )
     else:
-        st.info("No vessels in your list. Add new vessels above or load from a file.")
+        st.info("No vessels found in your list. Add new ones above.")
 
 with tab4:
     st.header("About This Application")
@@ -777,12 +726,10 @@ with tab4:
     * Click 'Clear All Fetched Sanctions Data' to remove all fetched data from memory and the local cache.
 
     **3. My Vessels Tab:**
-    * Your vessel list is now stored in a Python dictionary. This data is temporary, so use the provided buttons to save and load your list.
-    * Add new vessels with the manual entry form.
-    * Use the **"Download My Vessels List"** button to save your current list as a CSV or JSON file.
-    * Use the **"Upload a Saved List"** button to load a previously saved list.
+    * **For Permanent Changes:** Your vessel list is stored in a `st.secrets` file. To permanently add, edit, or remove vessels, you must update the `my_vessels` variable directly in the Streamlit Cloud dashboard.
+    * **For Temporary Changes:** You can add new vessels in the app, but these changes will only last until you refresh the browser.
+    * Use the "Download Current List" buttons to save your temporary list as a JSON or CSV file for later use.
     * The 'Check Sanctions Status & Update List' button compares your vessels against the most recently fetched sanctions data, highlighting any matches.
-    * 'Clear All Vessels from List' is now a dedicated button to reset your list for a fresh start.
 
     ### Contact Information:
     For technical assistance or inquiries, please contact: `it@rcsclass.org`
