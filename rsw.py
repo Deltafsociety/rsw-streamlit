@@ -21,6 +21,7 @@ UK_SANCTIONS_PUBLICATION_PAGE_URL = "https://www.gov.uk/government/publications/
 DMA_XLSX_URL = "https://www.dma.dk/Media/638834044135010725/2025118019-7%20Importversion%20-%20List%20of%20EU%20designated%20vessels%20(20-05-2025)%203010691_2_0.XLSX"
 UANI_WEBSCRAPE_URL = "https://www.unitedagainstnucleariran.com/blog/switch-list-tankers-shift-from-carrying-iranian-oil-to-russian-oil"
 UANI_BUNDLED_CSV_NAME = "UANI_Switch_List_Bundled.csv" # Name of the CSV file to bundle for UANI
+MY_VESSELS_CSV_NAME = "my_vessels.csv"
 USER_UPLOADED_SANCTIONS_CACHE_NAME = "user_uploaded_sanctions_cache.csv" # For general user uploads
 
 # Define common column patterns for numerical identifiers like IMO numbers
@@ -444,7 +445,7 @@ if 'global_sanctions_data_store' not in st.session_state:
         "EU_DMA_Vessels": pd.DataFrame(),
         "UANI_Vessels_Tracked": pd.DataFrame()
     }
-    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame() # No file persistence for uploaded sanctions data
+    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame()
 if 'my_vessels_data' not in st.session_state:
     st.session_state.my_vessels_data = []
 if 'report_generated' not in st.session_state:
@@ -639,7 +640,7 @@ with tab3:
     # Display and manage vessels
     if st.session_state.my_vessels_data:
         my_vessels_df = pd.DataFrame(st.session_state.my_vessels_data)
-
+        
         # Ensure the columns for status are there
         my_vessels_df['Sanctioned?'] = 'No'
         my_vessels_df['Sources'] = ''
