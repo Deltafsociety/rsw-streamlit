@@ -433,6 +433,7 @@ def load_user_uploaded_sanctions_from_file(file_path):
     return pd.DataFrame() # Return empty DataFrame if not found or error
 
 # --- Streamlit App Structure ---
+
 st.set_page_config(layout="wide", page_title="Royal Sanction Watch", page_icon=":anchor:")
 
 st.title("⚓ Royal Classification Society: Vessel Sanction & Data Tool")
@@ -445,9 +446,9 @@ if 'global_sanctions_data_store' not in st.session_state:
         "EU_DMA_Vessels": pd.DataFrame(),
         "UANI_Vessels_Tracked": pd.DataFrame()
     }
-    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame()
+    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame() # No file persistence for uploaded sanctions data
 if 'my_vessels_df' not in st.session_state:
-    st.session_state.my_vessels_df = pd.DataFrame(columns=['name', 'imo'])
+    st.session_state.my_vessels_df = pd.DataFrame(columns=['Vessel Name', 'IMO Number'])
 if 'report_generated' not in st.session_state:
     st.session_state.report_generated = False
 if 'logs' not in st.session_state:
@@ -503,7 +504,7 @@ with tab2:
                     all_dfs_raw.append(df.copy().assign(Source=source_name))
 
             if all_dfs_raw:
-                temp_combined_df = pd.concat(all_dfs_raw, ignore_index=True)
+                temp_combined_sanctions_df = pd.concat(all_dfs_raw, ignore_index=True)
                 for index, row in temp_combined_sanctions_df.iterrows():
                     imo_val_cleaned = re.sub(r'\D', '', str(row['IMO Number'])).strip()
                     if re.fullmatch(r'^\d{7}$', imo_val_cleaned):
@@ -616,7 +617,7 @@ with tab2:
 
 with tab3:
     st.header("My Vessels List")
-    st.info("Upload a CSV file to display your vessel list below. The list will be cleared if you close the app.")
+    st.info("Upload a CSV file or add a vessel manually. The list will be cleared if you close the app.")
 
     # File uploader to read the CSV
     uploaded_my_vessels_file = st.file_uploader("Upload a CSV file with 'name' and 'imo' columns", type=["csv"], key="my_vessels_uploader")
@@ -630,14 +631,13 @@ with tab3:
             imo_col = next((col for col in df_uploaded_vessels.columns if 'imo' in col.lower().strip()), None)
 
             if name_col and imo_col:
-                # Filter for valid IMO numbers
                 df_uploaded_vessels = df_uploaded_vessels[[name_col, imo_col]].copy()
                 df_uploaded_vessels.rename(columns={name_col: "Vessel Name", imo_col: "IMO Number"}, inplace=True)
                 df_uploaded_vessels['IMO Number'] = df_uploaded_vessels['IMO Number'].astype(str).str.replace(r'\D', '', regex=True)
                 df_uploaded_vessels = df_uploaded_vessels[df_uploaded_vessels['IMO Number'].str.match(r'^\d{7}$')]
                 
-                st.session_state.my_vessels_data = df_uploaded_vessels.to_dict('records')
-                st.success(f"Loaded {len(st.session_state.my_vessels_data)} vessels from '{uploaded_my_vessels_file.name}'.")
+                st.session_state.my_vessels_df = df_uploaded_vessels
+                st.success(f"Loaded {len(st.session_state.my_vessels_df)} vessels from '{uploaded_my_vessels_file.name}'.")
             else:
                 st.error(f"The uploaded CSV must contain columns for 'name' and 'imo'. Found columns: {df_uploaded_vessels.columns.tolist()}")
         except Exception as e:
@@ -655,8 +655,9 @@ with tab3:
         if add_vessel_submitted:
             if new_vessel_name and new_vessel_imo:
                 if re.fullmatch(r'^\d{7}$', new_vessel_imo):
-                    if not any(v['IMO Number'] == new_vessel_imo for v in st.session_state.my_vessels_data):
-                        st.session_state.my_vessels_data.append({'Vessel Name': new_vessel_name, 'IMO Number': new_vessel_imo})
+                    if not any(v == new_vessel_imo for v in st.session_state.my_vessels_df['IMO Number']):
+                        new_row = pd.DataFrame([{'Vessel Name': new_vessel_name, 'IMO Number': new_vessel_imo}])
+                        st.session_state.my_vessels_df = pd.concat([st.session_state.my_vessels_df, new_row], ignore_index=True)
                         st.success(f"Added vessel: {new_vessel_name} ({new_vessel_imo})")
                         st.rerun()
                     else:
@@ -667,9 +668,9 @@ with tab3:
                 st.error("Both Vessel Name and IMO Number are required.")
 
     # Display and manage vessels
-    if st.session_state.my_vessels_data:
-        my_vessels_df = pd.DataFrame(st.session_state.my_vessels_data)
-        
+    if not st.session_state.my_vessels_df.empty:
+        my_vessels_df = st.session_state.my_vessels_df.copy()
+
         st.info(f"Displaying {len(my_vessels_df)} vessels from the current list.")
         
         if st.button("Check Sanctions Status & Update List"):
@@ -700,8 +701,7 @@ with tab3:
                     lambda x: ', '.join(sorted(list(set(sanctioned_sources.get(x, [])))))
                 )
                 
-                st.session_state.my_vessels_data = my_vessels_df.to_dict('records')
-
+                st.session_state.my_vessels_df = my_vessels_df
                 st.success("Sanction check complete. Results are shown in the table below.")
                 st.rerun()
 
@@ -751,11 +751,11 @@ with tab4:
     * Click 'Clear All Fetched Sanctions Data' to remove all fetched data from memory and the local cache.
 
     **3. My Vessels Tab:**
-    * **Upload:** Use the 'Upload a CSV file' button to load your list.
-    * **Manual Entry:** Use the form to manually add a new vessel one by one.
-    * **Check:** Click 'Check Sanctions Status & Update List' to compare your vessels against the latest sanctions data. The result will be added as new columns in the table.
-    * **Export:** Click 'Export My Vessels List as CSV' to download the final list, including the sanctions status.
-    * **Note:** The list is **not saved** between sessions. You must re-upload or manually re-enter your data each time you use the app.
+    * The 'My Vessels' tab is now simplified to a direct upload-and-display workflow.
+    * Use the **'Upload a CSV file'** button to select your vessel list. The app will immediately process it and display it in a table below.
+    * The list is **not saved** between sessions. You must re-upload the file each time you use the app.
+    * The 'Check Sanctions Status & Update List' button compares your vessels against the most recently fetched sanctions data, highlighting any matches.
+    * 'Export My Vessels List as CSV' allows you to download the currently displayed list.
 
     ### Contact Information:
     For technical assistance or inquiries, please contact: `it@rcsclass.org`
