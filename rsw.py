@@ -380,6 +380,7 @@ def process_all_data():
     st.session_state.report_generated = True
 
 # --- Helper for My Vessels Persistence ---
+@st.cache_data
 def load_my_vessels_from_file(file_path):
     vessels = []
     if os.path.exists(file_path):
@@ -660,7 +661,8 @@ with tab3:
     uploaded_my_vessels_file = st.file_uploader("Upload a CSV file with 'name' and 'imo' columns", type=["csv"], key="my_vessels_uploader")
     if uploaded_my_vessels_file is not None:
         try:
-            df_uploaded_vessels = pd.read_csv(uploaded_my_vessels_file)
+            with st.spinner("Loading file..."):
+                df_uploaded_vessels = pd.read_csv(uploaded_my_vessels_file)
             
             name_col = next((col for col in df_uploaded_vessels.columns if 'name' in col.lower().strip()), None)
             imo_col = next((col for col in df_uploaded_vessels.columns if 'imo' in col.lower().strip()), None)
@@ -750,9 +752,10 @@ with tab3:
                     return ['background-color: #FFCCCC; color: #CC0000; font-weight: bold'] * len(row)
                 return [''] * len(row)
             
-            styled_df = my_vessels_df.style.apply(highlight_sanctioned, axis=1)
-            
-            edited_df = st.data_editor(styled_df, num_rows="dynamic", use_container_width=True)
+            with st.spinner("Displaying vessels..."):
+                st.info(f"Displaying {len(my_vessels_df)} vessels.")
+                styled_df = my_vessels_df.style.apply(highlight_sanctioned, axis=1)
+                edited_df = st.data_editor(styled_df, num_rows="dynamic", use_container_width=True)
             
             col_save, col_export = st.columns(2)
             with col_save:
