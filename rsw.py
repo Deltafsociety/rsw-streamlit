@@ -446,8 +446,8 @@ if 'global_sanctions_data_store' not in st.session_state:
         "UANI_Vessels_Tracked": pd.DataFrame()
     }
     st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame()
-if 'my_vessels_data' not in st.session_state:
-    st.session_state.my_vessels_data = []
+if 'my_vessels_df' not in st.session_state:
+    st.session_state.my_vessels_df = pd.DataFrame(columns=['name', 'imo'])
 if 'report_generated' not in st.session_state:
     st.session_state.report_generated = False
 if 'logs' not in st.session_state:
@@ -504,7 +504,7 @@ with tab2:
 
             if all_dfs_raw:
                 temp_combined_df = pd.concat(all_dfs_raw, ignore_index=True)
-                for index, row in temp_combined_df.iterrows():
+                for index, row in temp_combined_sanctions_df.iterrows():
                     imo_val_cleaned = re.sub(r'\D', '', str(row['IMO Number'])).strip()
                     if re.fullmatch(r'^\d{7}$', imo_val_cleaned):
                         sanctioned_imos.add(imo_val_cleaned)
@@ -616,7 +616,7 @@ with tab2:
 
 with tab3:
     st.header("My Vessels List")
-    st.info("Upload a CSV file to display your vessel list below.")
+    st.info("Upload a CSV file to display your vessel list below. The list will be cleared if you close the app.")
 
     # File uploader to read the CSV
     uploaded_my_vessels_file = st.file_uploader("Upload a CSV file with 'name' and 'imo' columns", type=["csv"], key="my_vessels_uploader")
@@ -630,25 +630,51 @@ with tab3:
             imo_col = next((col for col in df_uploaded_vessels.columns if 'imo' in col.lower().strip()), None)
 
             if name_col and imo_col:
+                # Filter for valid IMO numbers
+                df_uploaded_vessels = df_uploaded_vessels[[name_col, imo_col]].copy()
+                df_uploaded_vessels.rename(columns={name_col: "Vessel Name", imo_col: "IMO Number"}, inplace=True)
+                df_uploaded_vessels['IMO Number'] = df_uploaded_vessels['IMO Number'].astype(str).str.replace(r'\D', '', regex=True)
+                df_uploaded_vessels = df_uploaded_vessels[df_uploaded_vessels['IMO Number'].str.match(r'^\d{7}$')]
+                
                 st.session_state.my_vessels_data = df_uploaded_vessels.to_dict('records')
                 st.success(f"Loaded {len(st.session_state.my_vessels_data)} vessels from '{uploaded_my_vessels_file.name}'.")
             else:
                 st.error(f"The uploaded CSV must contain columns for 'name' and 'imo'. Found columns: {df_uploaded_vessels.columns.tolist()}")
         except Exception as e:
             st.error(f"Error processing the uploaded file: {e}")
+        
+        st.rerun()
+
+    # Manual Add Vessel section
+    st.subheader("Add New Vessel Manually")
+    with st.form("add_vessel_form", clear_on_submit=True):
+        new_vessel_name = st.text_input("Vessel Name")
+        new_vessel_imo = st.text_input("IMO Number (7 digits)")
+        add_vessel_submitted = st.form_submit_button("Add Vessel to List")
+
+        if add_vessel_submitted:
+            if new_vessel_name and new_vessel_imo:
+                if re.fullmatch(r'^\d{7}$', new_vessel_imo):
+                    if not any(v['IMO Number'] == new_vessel_imo for v in st.session_state.my_vessels_data):
+                        st.session_state.my_vessels_data.append({'Vessel Name': new_vessel_name, 'IMO Number': new_vessel_imo})
+                        st.success(f"Added vessel: {new_vessel_name} ({new_vessel_imo})")
+                        st.rerun()
+                    else:
+                        st.warning(f"Vessel with IMO Number {new_vessel_imo} already exists.")
+                else:
+                    st.error("IMO Number must be exactly 7 digits.")
+            else:
+                st.error("Both Vessel Name and IMO Number are required.")
 
     # Display and manage vessels
     if st.session_state.my_vessels_data:
         my_vessels_df = pd.DataFrame(st.session_state.my_vessels_data)
         
-        # Ensure the columns for status are there
-        my_vessels_df['Sanctioned?'] = 'No'
-        my_vessels_df['Sources'] = ''
-        
-        st.info(f"Displaying {len(my_vessels_df)} vessels from the uploaded list.")
+        st.info(f"Displaying {len(my_vessels_df)} vessels from the current list.")
         
         if st.button("Check Sanctions Status & Update List"):
-            if not any(df is not None and not df.empty for df in st.session_state.global_sanctions_data_store.values()):
+            sanctions_data_available = any(df is not None and not df.empty for df in st.session_state.global_sanctions_data_store.values())
+            if not sanctions_data_available:
                 st.warning("No fresh sanctions data available. Please generate a report first from the 'Sanctions Report Generator' tab.")
             else:
                 sanctions_data_dict = st.session_state.global_sanctions_data_store
@@ -665,14 +691,18 @@ with tab3:
                                 sanctioned_imos.add(imo_val_cleaned)
                                 sanctioned_sources.setdefault(imo_val_cleaned, []).append(row['Source'])
                 st.info(f"Consolidated {len(sanctioned_imos)} unique sanctioned IMOs.")
-
-                my_vessels_df['Sanctioned?'] = my_vessels_df['imo'].astype(str).apply(lambda x: 'Yes' if re.sub(r'\D', '', x) in sanctioned_imos else 'No')
-                my_vessels_df['Sources'] = my_vessels_df['imo'].astype(str).apply(lambda x: ', '.join(sorted(list(set(sanctioned_sources.get(re.sub(r'\D', '', x), []))))))
                 
-                my_vessels_df.rename(columns={'name': 'Vessel Name', 'imo': 'IMO Number'}, inplace=True)
+                # Perform the check and update the DataFrame
+                my_vessels_df['Sanctioned?'] = my_vessels_df['IMO Number'].astype(str).apply(
+                    lambda x: 'Yes' if x in sanctioned_imos else 'No'
+                )
+                my_vessels_df['Sources'] = my_vessels_df['IMO Number'].astype(str).apply(
+                    lambda x: ', '.join(sorted(list(set(sanctioned_sources.get(x, [])))))
+                )
+                
                 st.session_state.my_vessels_data = my_vessels_df.to_dict('records')
 
-                st.success("Sanction check complete.")
+                st.success("Sanction check complete. Results are shown in the table below.")
                 st.rerun()
 
         if not my_vessels_df.empty:
@@ -694,7 +724,7 @@ with tab3:
                 key="export_my_vessels_btn"
             )
     else:
-        st.info("Please upload a CSV file to see your vessel list here.")
+        st.info("Please upload a CSV file or add a vessel manually to see your list here.")
 
 with tab4:
     st.header("About This Application")
@@ -721,11 +751,11 @@ with tab4:
     * Click 'Clear All Fetched Sanctions Data' to remove all fetched data from memory and the local cache.
 
     **3. My Vessels Tab:**
-    * The 'My Vessels' tab is now simplified to a direct upload-and-display workflow.
-    * Use the **'Upload a CSV file'** button to select your vessel list. The app will immediately process it and display it in a table below.
-    * The list is **not saved** between sessions. You must re-upload the file each time you use the app.
-    * The 'Check Sanctions Status & Update List' button compares your vessels against the most recently fetched sanctions data, highlighting any matches.
-    * 'Export My Vessels List as CSV' allows you to download the currently displayed list.
+    * **Upload:** Use the 'Upload a CSV file' button to load your list.
+    * **Manual Entry:** Use the form to manually add a new vessel one by one.
+    * **Check:** Click 'Check Sanctions Status & Update List' to compare your vessels against the latest sanctions data. The result will be added as new columns in the table.
+    * **Export:** Click 'Export My Vessels List as CSV' to download the final list, including the sanctions status.
+    * **Note:** The list is **not saved** between sessions. You must re-upload or manually re-enter your data each time you use the app.
 
     ### Contact Information:
     For technical assistance or inquiries, please contact: `it@rcsclass.org`
