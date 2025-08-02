@@ -4,5 +4,3 @@ requests
 beautifulsoup4
 lxml
 fake-useragent
-streamlit-gsheets-connection
-gspread
