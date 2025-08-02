@@ -338,22 +338,17 @@ def fetch_uani_vessels():
 
 # --- Main Report Processing Logic ---
 def process_all_data():
-    # Clear previous logs and add initial message
     st.session_state.logs = [] 
     st.session_state.logs.append("INFO: Starting sanctions report generation...")
     
     fetched_data = {}
     
-    # Initialize a placeholder for the progress bar
-    # This empty() call is important for creating a persistent element across reruns
     progress_bar_placeholder = st.empty() 
     
-    # Helper to update progress bar
     def update_overall_progress_value(value, status_text):
         progress_bar_placeholder.progress(value, text=status_text)
         time.sleep(0.01)
 
-    # Step 1: OFAC
     with st.spinner("Fetching OFAC data..."):
         update_overall_progress_value(0.05, "Starting OFAC fetch...")
         fetched_data["OFAC_Vessels"] = fetch_ofac_vessels()
@@ -361,21 +356,18 @@ def process_all_data():
         
     update_overall_progress_value(0.25, "OFAC data fetched. Starting UK fetch...")
 
-    # Step 2: UK
     with st.spinner("Fetching UK sanctions data..."):
         fetched_data["UK_Sanctions_Vessels"] = fetch_uk_sanctions_vessels()
         st.session_state.logs.append(f"INFO: UK fetch finished. Found {len(fetched_data['UK_Sanctions_Vessels'])} vessels.")
         
     update_overall_progress_value(0.50, "UK data fetched. Starting EU (DMA) fetch...")
 
-    # Step 3: DMA
     with st.spinner("Fetching EU (DMA) data..."):
         fetched_data["EU_DMA_Vessels"] = fetch_dma_vessels()
         st.session_state.logs.append(f"INFO: EU (DMA) fetch finished. Found {len(fetched_data['EU_DMA_Vessels'])} vessels.")
         
     update_overall_progress_value(0.75, "EU (DMA) data fetched. Starting UANI fetch...")
 
-    # Step 4: UANI
     with st.spinner("Fetching UANI data..."):
         fetched_data["UANI_Vessels_Tracked"] = fetch_uani_vessels()
         st.session_state.logs.append(f"INFO: UANI fetch finished. Found {len(fetched_data['UANI_Vessels_Tracked'])} vessels.")
@@ -384,7 +376,6 @@ def process_all_data():
     st.success("Report generation process completed. Check 'Sanctions Report Viewer' tab for data.")
     st.session_state.logs.append("SUCCESS: Report generation process completed.")
 
-    # Store the fetched data in session state for cross-tab access
     st.session_state.global_sanctions_data_store = fetched_data
     st.session_state.report_generated = True
 
@@ -454,15 +445,12 @@ if 'global_sanctions_data_store' not in st.session_state:
         "EU_DMA_Vessels": pd.DataFrame(),
         "UANI_Vessels_Tracked": pd.DataFrame()
     }
-    # Load user uploaded sanctions data from cache on startup
     st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = load_user_uploaded_sanctions_from_file(USER_UPLOADED_SANCTIONS_CACHE_NAME)
 
 if 'my_vessels_data' not in st.session_state:
-    # Load my_vessels from CSV on app start
     st.session_state.my_vessels_data = load_my_vessels_from_file(MY_VESSELS_CSV_NAME)
 if 'report_generated' not in st.session_state:
     st.session_state.report_generated = False
-# Initialize logs for display
 if 'logs' not in st.session_state:
     st.session_state.logs = []
 
@@ -476,13 +464,11 @@ with tab1:
     st.warning("Note: Fetching directly from websites may sometimes encounter anti-bot measures (e.g., 403 Forbidden).")
     
     if st.button("Generate New Sanctions Report"):
-        # Clear previous logs and generate new ones
         st.session_state.logs = [] 
         process_all_data()
-        st.rerun() # Rerun to update the display tab and ensure state is fresh
-    
+        st.rerun()
+
     st.subheader("Process Logs")
-    # Display logs from session_state
     for log_message in st.session_state.logs:
         if log_message.startswith("ERROR:"):
             st.error(log_message.replace("ERROR: ", ""))
@@ -499,7 +485,7 @@ with tab1:
 with tab2:
     st.header("Sanctions Report Viewer")
     
-    # Check if ANY dataframes in the global store are not empty
+    # Updated condition: Check if ANY dataframes in the global store are not empty
     if not any(df is not None and not df.empty for df in st.session_state.global_sanctions_data_store.values()):
         st.info("No sanctions report data available yet. Please generate a report in the 'Sanctions Report Generator' tab.")
     else:
@@ -509,28 +495,25 @@ with tab2:
         combined_df = pd.DataFrame()
         sanctioned_imos = set()
         sanctioned_sources = {}
-        
-        # Load the raw data from session state
-        data_store = st.session_state.global_sanctions_data_store
 
         # First, consolidate all sanctions data into a single source set
-        all_dfs_raw = []
-        for source_name, df in data_store.items():
-            if df is not None and not df.empty:
-                all_dfs_raw.append(df.assign(Source=source_name))
-        
-        if all_dfs_raw:
-            # First, consolidate the IMOs for the sanction check logic
-            temp_combined_df = pd.concat(all_dfs_raw, ignore_index=True)
-            for index, row in temp_combined_df.iterrows():
-                imo_val_cleaned = re.sub(r'\D', '', str(row['IMO Number'])).strip()
-                if re.fullmatch(r'^\d{7}$', imo_val_cleaned):
-                    sanctioned_imos.add(imo_val_cleaned)
-                    sanctioned_sources.setdefault(imo_val_cleaned, []).append(row['Source'])
+        with st.spinner("Consolidating data for viewer..."):
+            all_dfs_raw = []
+            for source_name, df in st.session_state.global_sanctions_data_store.items():
+                if df is not None and not df.empty:
+                    all_dfs_raw.append(df.copy().assign(Source=source_name))
+
+            if all_dfs_raw:
+                temp_combined_df = pd.concat(all_dfs_raw, ignore_index=True)
+                for index, row in temp_combined_df.iterrows():
+                    imo_val_cleaned = re.sub(r'\D', '', str(row['IMO Number'])).strip()
+                    if re.fullmatch(r'^\d{7}$', imo_val_cleaned):
+                        sanctioned_imos.add(imo_val_cleaned)
+                        sanctioned_sources.setdefault(imo_val_cleaned, []).append(row['Source'])
         
         # Now, prepare the dataframes for final display
         df_display_store = {}
-        for source_name, df in data_store.items():
+        for source_name, df in st.session_state.global_sanctions_data_store.items():
             if df is not None and not df.empty and 'IMO Number' in df.columns:
                 df_copy = df.copy()
                 df_copy['Sanctioned?'] = df_copy['IMO Number'].apply(
@@ -554,7 +537,7 @@ with tab2:
             combined_df = pd.DataFrame()
 
         # Create options for the selectbox
-        source_options = ["All Data (Combined)"] + [k for k, v in data_store.items() if v is not None and not v.empty]
+        source_options = ["All Data (Combined)"] + [k for k, v in st.session_state.global_sanctions_data_store.items() if v is not None and not v.empty]
         
         selected_source_key = st.selectbox("Select Data Source to View:", source_options)
 
@@ -688,16 +671,70 @@ with tab3:
                 my_vessels_df['Vessel Name'].astype(str).str.lower().str.contains(search_term_lower) |
                 my_vessels_df['IMO Number'].astype(str).str.lower().str.contains(search_term_lower)
             ]
+        
+        # This part will run only on a button click
+        if st.button("Check Sanctions Status & Update List"):
+            if not any(df is not None and not df.empty for df in st.session_state.global_sanctions_data_store.values()):
+                st.warning("No fresh sanctions data available. Please generate a report first from the 'Sanctions Report Generator' tab.")
+            else:
+                sanctions_data_dict = st.session_state.global_sanctions_data_store
+                
+                sanctioned_imos = set()
+                sanctioned_sources = {}
+                with st.spinner("Consolidating sanctions lists..."):
+                    all_sanctions_df_raw = [df.copy().assign(Source=source_name) for source_name, df in sanctions_data_dict.items() if df is not None and not df.empty]
+                    if all_sanctions_df_raw:
+                        temp_combined_sanctions_df = pd.concat(all_sanctions_df_raw, ignore_index=True)
+                        for index, row in temp_combined_sanctions_df.iterrows():
+                            imo_val_cleaned = re.sub(r'\D', '', str(row['IMO Number'])).strip()
+                            if re.fullmatch(r'^\d{7}$', imo_val_cleaned):
+                                sanctioned_imos.add(imo_val_cleaned)
+                                sanctioned_sources.setdefault(imo_val_cleaned, []).append(row['Source'])
+                st.info(f"Consolidated {len(sanctioned_imos)} unique sanctioned IMOs.")
+
+                total_vessels_to_check = len(st.session_state.my_vessels_data)
+                check_progress_bar = st.progress(0, text=f"Checking 0 of {total_vessels_to_check} vessels...")
+                
+                updated_vessels_data = []
+                for i, vessel in enumerate(st.session_state.my_vessels_data):
+                    vessel_imo_cleaned = re.sub(r'\D', '', str(vessel['imo'])).strip()
+                    
+                    is_sanctioned = "No"
+                    sources = ""
+                    if vessel_imo_cleaned in sanctioned_imos:
+                        is_sanctioned = "Yes"
+                        sources = ", ".join(sorted(list(set(sanctioned_sources.get(vessel_imo_cleaned, [])))))
+                    
+                    updated_vessel = vessel.copy()
+                    updated_vessel['Sanctioned?'] = is_sanctioned
+                    updated_vessel['Sources'] = sources
+                    updated_vessels_data.append(updated_vessel)
+                    
+                    check_progress_bar.progress((i + 1) / total_vessels_to_check, text=f"Checking {i+1} of {total_vessels_to_check} vessels...")
+                    time.sleep(0.01)
+
+                check_progress_bar.empty()
+                st.success("Sanction check complete.")
+                
+                st.session_state.my_vessels_data = updated_vessels_data
+                st.rerun()
 
         # Display the table with editable rows
-        edited_df = st.data_editor(my_vessels_df, num_rows="dynamic", use_container_width=True)
-        st.session_state.my_vessels_data = edited_df.to_dict('records') # Update session state after edit
+        if st.session_state.my_vessels_data:
+            my_vessels_df_display = pd.DataFrame(st.session_state.my_vessels_data)
+            
+            # The highlighting logic is now applied here before displaying
+            def highlight_sanctioned(row):
+                # Ensure the column exists before applying the check
+                if 'Sanctioned?' in row and row['Sanctioned?'] == 'Yes':
+                    return ['background-color: #FFCCCC; color: #CC0000; font-weight: bold'] * len(row)
+                return [''] * len(row)
+            
+            styled_df = my_vessels_df_display.style.apply(highlight_sanctioned, axis=1)
+            st.dataframe(styled_df, use_container_width=True)
 
-        if st.button("Save Changes to My Vessels (from table above)"):
-            # st.data_editor updates session_state directly, just need to save to file
-            save_my_vessels_to_file(st.session_state.my_vessels_data, MY_VESSELS_CSV_NAME)
-            st.success("My Vessels list updated and saved.")
-            st.rerun()
+        if st.button("Delete Selected Vessel(s)"):
+            st.warning("Please delete rows directly in the table above and click 'Save Changes' to remove vessels.")
 
         col_export_my_vessels = st.columns(1)[0]
         with col_export_my_vessels:
@@ -711,65 +748,13 @@ with tab3:
                     mime="text/csv",
                     key="export_my_vessels_btn"
                 )
-            
-        st.subheader("Check Sanctions Status")
-        if st.button("Check My Vessels Against Sanctions Data"):
-            if not st.session_state.my_vessels_data:
-                st.warning("No vessels in 'My Vessels' list to check.")
-            # Check for ANY data, not just if a report was generated in this session.
-            elif not any(df is not None and not df.empty for df in st.session_state.global_sanctions_data_store.values()):
-                st.warning("No fresh sanctions data available. Please generate a report first from the 'Sanctions Report Generator' tab.")
-            else:
-                st.markdown("---")
-                st.subheader("Sanction Check Results:")
-                results = []
-                total_vessels_to_check = len(st.session_state.my_vessels_data)
-                check_progress_bar = st.progress(0, text=f"Checking 0 of {total_vessels_to_check} vessels...")
-                
-                sanctioned_imos_from_report = set()
-                sanctioned_vessel_sources = {}
 
-                # Consolidate all IMOs from fetched sanctions data
-                with st.spinner("Consolidating sanctions lists..."):
-                    for source_name, df in st.session_state.global_sanctions_data_store.items():
-                        if df is not None and not df.empty and 'IMO Number' in df.columns:
-                            for imo_val in df['IMO Number'].dropna().astype(str).tolist():
-                                imo_val_cleaned = re.sub(r'\D', '', str(imo_val)).strip()
-                                if re.fullmatch(r'^\d{7}$', imo_val_cleaned):
-                                    sanctioned_imos_from_report.add(imo_val_cleaned)
-                                    sanctioned_sources.setdefault(imo_val_cleaned, []).append(source_name)
-                st.info(f"Consolidated {len(sanctioned_imos_from_report)} unique sanctioned IMOs.")
-                
-                for i, vessel in enumerate(st.session_state.my_vessels_data):
-                    vessel_imo_cleaned = re.sub(r'\D', '', str(vessel['imo'])).strip()
-                    is_sanctioned = "No"
-                    sources = ""
-                    if vessel_imo_cleaned in sanctioned_imos_from_report:
-                        is_sanctioned = "Yes"
-                        sources = ", ".join(sanctioned_vessel_sources.get(vessel_imo_cleaned, []))
-                    results.append({
-                        "Vessel Name": vessel['name'],
-                        "IMO Number": vessel['imo'],
-                        "Sanctioned?": is_sanctioned,
-                        "Sources": sources
-                    })
-                    check_progress_bar.progress((i + 1) / total_vessels_to_check, text=f"Checking {i+1} of {total_vessels_to_check} vessels...")
-                    time.sleep(0.01) # Small delay for animation visibility
-
-                check_progress_bar.empty() # Clear the progress bar
-                st.success("Sanction check complete.")
-                
-                results_df = pd.DataFrame(results)
-                # Apply styling for sanctioned vessels if 'Sanctioned?' column exists
-                def highlight_sanctioned(row):
-                    if row['Sanctioned?'] == 'Yes':
-                        return ['background-color: #FFCCCC; color: #CC0000; font-weight: bold'] * len(row)
-                    return [''] * len(row)
-
-                if not results_df.empty and 'Sanctioned?' in results_df.columns:
-                    st.dataframe(results_df.style.apply(highlight_sanctioned, axis=1), use_container_width=True)
-                else:
-                    st.dataframe(results_df, use_container_width=True)
+        if st.button("Save Changes to My Vessels"):
+            # The edited_df from st.data_editor has already updated session state,
+            # so we just need to save it to file
+            save_my_vessels_to_file(st.session_state.my_vessels_data, MY_VESSELS_CSV_NAME)
+            st.success("My Vessels list updated and saved.")
+            st.rerun()
 
     else:
         st.info("No vessels in your list. Add new vessels above or load from a CSV.")
