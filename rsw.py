@@ -73,7 +73,7 @@ def get_soup_silent(url, is_xml=False, delay_seconds=1):
     except Exception as e:
         return None
 
-# --- Data Fetching Functions (removed all direct Streamlit UI calls) ---
+# --- Data Fetching Functions ---
 
 @st.cache_data(ttl=MAX_REPORT_AGE_SECONDS)
 def fetch_ofac_vessels():
@@ -261,7 +261,7 @@ def fetch_uani_vessels():
                 df_from_bundled["Source"] = "UANI (Bundled CSV)"
                 df_from_bundled.dropna(subset=["IMO Number"], inplace=True)
                 df_from_bundled["IMO Number"] = df_from_bundled["IMO Number"].astype(str).apply(lambda x: re.sub(r'\D', '', str(x)))
-                df_from_bundled = df_from_bundled[df['IMO Number'].str.match(r'^\d{7}$')]
+                df_from_bundled = df_from_bundled[df_from_bundled['IMO Number'].str.match(r'^\d{7}$')]
                 st.session_state.logs.append(f"SUCCESS: UANI: Loaded {len(df_from_bundled)} vessels from bundled CSV.")
                 return df_from_bundled # Return immediately if successful
             else:
@@ -446,7 +446,7 @@ if 'global_sanctions_data_store' not in st.session_state:
         "EU_DMA_Vessels": pd.DataFrame(),
         "UANI_Vessels_Tracked": pd.DataFrame()
     }
-    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame()
+    st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = pd.DataFrame() # No file persistence for uploaded sanctions data
 if 'my_vessels_df' not in st.session_state:
     st.session_state.my_vessels_df = pd.DataFrame(columns=['Vessel Name', 'IMO Number'])
 if 'report_generated' not in st.session_state:
@@ -498,11 +498,8 @@ with tab2:
 
         # First, consolidate all sanctions data into a single source set
         with st.spinner("Consolidating data for viewer..."):
-            all_dfs_raw = []
-            for source_name, df in st.session_state.global_sanctions_data_store.items():
-                if df is not None and not df.empty:
-                    all_dfs_raw.append(df.copy().assign(Source=source_name))
-
+            all_dfs_raw = [df for df in st.session_state.global_sanctions_data_store.values() if df is not None and not df.empty]
+            
             if all_dfs_raw:
                 temp_combined_sanctions_df = pd.concat(all_dfs_raw, ignore_index=True)
                 for index, row in temp_combined_sanctions_df.iterrows():
@@ -636,13 +633,15 @@ with tab3:
                 df_uploaded_vessels['IMO Number'] = df_uploaded_vessels['IMO Number'].astype(str).str.replace(r'\D', '', regex=True)
                 df_uploaded_vessels = df_uploaded_vessels[df_uploaded_vessels['IMO Number'].str.match(r'^\d{7}$')]
                 
-                st.session_state.my_vessels_df = df_uploaded_vessels
-                st.success(f"Loaded {len(st.session_state.my_vessels_df)} vessels from '{uploaded_my_vessels_file.name}'.")
+                # Use a unique key for the file to prevent re-initialization
+                st.session_state.my_vessels_data = df_uploaded_vessels.to_dict('records')
+                st.success(f"Loaded {len(st.session_state.my_vessels_data)} vessels from '{uploaded_my_vessels_file.name}'.")
             else:
                 st.error(f"The uploaded CSV must contain columns for 'name' and 'imo'. Found columns: {df_uploaded_vessels.columns.tolist()}")
         except Exception as e:
             st.error(f"Error processing the uploaded file: {e}")
         
+        # This rerun is important to refresh the display after the upload
         st.rerun()
 
     # Manual Add Vessel section
@@ -655,9 +654,8 @@ with tab3:
         if add_vessel_submitted:
             if new_vessel_name and new_vessel_imo:
                 if re.fullmatch(r'^\d{7}$', new_vessel_imo):
-                    if not any(v == new_vessel_imo for v in st.session_state.my_vessels_df['IMO Number']):
-                        new_row = pd.DataFrame([{'Vessel Name': new_vessel_name, 'IMO Number': new_vessel_imo}])
-                        st.session_state.my_vessels_df = pd.concat([st.session_state.my_vessels_df, new_row], ignore_index=True)
+                    if not any(v['IMO Number'] == new_vessel_imo for v in st.session_state.my_vessels_data):
+                        st.session_state.my_vessels_data.append({'Vessel Name': new_vessel_name, 'IMO Number': new_vessel_imo})
                         st.success(f"Added vessel: {new_vessel_name} ({new_vessel_imo})")
                         st.rerun()
                     else:
@@ -668,8 +666,8 @@ with tab3:
                 st.error("Both Vessel Name and IMO Number are required.")
 
     # Display and manage vessels
-    if not st.session_state.my_vessels_df.empty:
-        my_vessels_df = st.session_state.my_vessels_df.copy()
+    if st.session_state.my_vessels_data:
+        my_vessels_df = pd.DataFrame(st.session_state.my_vessels_data)
 
         st.info(f"Displaying {len(my_vessels_df)} vessels from the current list.")
         
@@ -683,7 +681,7 @@ with tab3:
                 sanctioned_imos = set()
                 sanctioned_sources = {}
                 with st.spinner("Consolidating sanctions lists..."):
-                    all_sanctions_df_raw = [df.copy().assign(Source=source_name) for source_name, df in sanctions_data_dict.items() if df is not None and not df.empty]
+                    all_sanctions_df_raw = [df for df in sanctions_data_dict.values() if df is not None and not df.empty]
                     if all_sanctions_df_raw:
                         temp_combined_sanctions_df = pd.concat(all_sanctions_df_raw, ignore_index=True)
                         for index, row in temp_combined_sanctions_df.iterrows():
@@ -701,21 +699,22 @@ with tab3:
                     lambda x: ', '.join(sorted(list(set(sanctioned_sources.get(x, [])))))
                 )
                 
+                # Update the session state with the new DataFrame containing the sanctions info
                 st.session_state.my_vessels_df = my_vessels_df
                 st.success("Sanction check complete. Results are shown in the table below.")
                 st.rerun()
 
-        if not my_vessels_df.empty:
+        if not st.session_state.my_vessels_df.empty:
             def highlight_sanctioned(row):
                 if 'Sanctioned?' in row and row['Sanctioned?'] == 'Yes':
                     return ['background-color: #FFCCCC; color: #CC0000; font-weight: bold'] * len(row)
                 return [''] * len(row)
             
-            styled_df = my_vessels_df.style.apply(highlight_sanctioned, axis=1)
+            styled_df = st.session_state.my_vessels_df.style.apply(highlight_sanctioned, axis=1)
             
             st.dataframe(styled_df, use_container_width=True)
             
-            csv_export_my_vessels = my_vessels_df.to_csv(index=False).encode('utf-8')
+            csv_export_my_vessels = st.session_state.my_vessels_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="Export My Vessels List as CSV",
                 data=csv_export_my_vessels,
@@ -751,7 +750,7 @@ with tab4:
     * Click 'Clear All Fetched Sanctions Data' to remove all fetched data from memory and the local cache.
 
     **3. My Vessels Tab:**
-    * **Upload:** Use the 'Upload a CSV file' button to load your list.
+    * **Upload:** Use the 'Upload a CSV file' button to select your vessel list. The app will immediately process it and display it in a table below.
     * **Manual Entry:** Use the form to manually add a new vessel one by one.
     * **Check:** Click 'Check Sanctions Status & Update List' to compare your vessels against the latest sanctions data. The result will be added as new columns in the table.
     * **Export:** Click 'Export My Vessels List as CSV' to download the final list, including the sanctions status.
