@@ -12,7 +12,6 @@ import datetime
 import sys
 import time
 from urllib.parse import urljoin
-from streamlit_gsheets import GSheetsConnection
 
 # --- Configuration ---
 MAX_REPORT_AGE_SECONDS = 3600 * 24 # 24 hours (adjust as needed)
@@ -21,6 +20,7 @@ UK_SANCTIONS_PUBLICATION_PAGE_URL = "https://www.gov.uk/government/publications/
 DMA_XLSX_URL = "https://www.dma.dk/Media/638834044135010725/2025118019-7%20Importversion%20-%20List%20of%20EU%20designated%20vessels%20(20-05-2025)%203010691_2_0.XLSX"
 UANI_WEBSCRAPE_URL = "https://www.unitedagainstnucleariran.com/blog/switch-list-tankers-shift-from-carrying-iranian-oil-to-russian-oil"
 UANI_BUNDLED_CSV_NAME = "UANI_Switch_List_Bundled.csv" # Name of the CSV file to bundle for UANI
+MY_VESSELS_CSV_NAME = "my_vessels.csv"
 USER_UPLOADED_SANCTIONS_CACHE_NAME = "user_uploaded_sanctions_cache.csv" # For general user uploads
 
 # Define common column patterns for numerical identifiers like IMO numbers
@@ -55,7 +55,24 @@ def get_requests_session():
     session.headers.update({'User-Agent': user_agent_string})
     return session
 
-# --- Data Fetching Functions ---
+# --- Helper: Get Soup from URL (removed st.info, st.success, st.error) ---
+def get_soup_silent(url, is_xml=False, delay_seconds=1):
+    time.sleep(delay_seconds) # Respect delays
+    session = get_requests_session()
+    try:
+        response = session.get(url, timeout=60)
+        response.raise_for_status()
+        parser_type = 'lxml-xml' if is_xml else 'lxml'
+        soup = BeautifulSoup(response.content, parser_type)
+        return soup
+    except requests.exceptions.RequestException as e:
+        # In a cached function, avoid direct Streamlit calls here.
+        # Log to console or internal variable if critical for debugging, but not GUI.
+        return None
+    except Exception as e:
+        return None
+
+# --- Data Fetching Functions (removed all direct Streamlit UI calls) ---
 
 @st.cache_data(ttl=MAX_REPORT_AGE_SECONDS)
 def fetch_ofac_vessels():
@@ -362,6 +379,38 @@ def process_all_data():
     st.session_state.global_sanctions_data_store = fetched_data
     st.session_state.report_generated = True
 
+# --- Helper for My Vessels Persistence ---
+def load_my_vessels_from_file(file_path):
+    vessels = []
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, mode='r', newline='', encoding='utf-8') as file:
+                reader = csv.DictReader(file)
+                if reader.fieldnames:
+                    reader.fieldnames = [field.strip() for field in reader.fieldnames]
+                
+                if 'name' in reader.fieldnames and 'imo' in reader.fieldnames:
+                    for row in reader:
+                        cleaned_row = {k.strip(): v for k, v in row.items()}
+                        vessels.append({'name': cleaned_row['name'], 'imo': cleaned_row['imo']})
+                else:
+                    st.warning(f"CSV headers missing 'name' or 'imo' in {file_path}. Found: {reader.fieldnames}")
+        except Exception as e:
+            st.error(f"Error loading vessels from {file_path}: {e}")
+    return vessels
+
+def save_my_vessels_to_file(vessels, file_path):
+    try:
+        with open(file_path, mode='w', newline='', encoding='utf-8') as file:
+            fieldnames = ['name', 'imo']
+            writer = csv.DictWriter(file, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(vessels)
+        st.success(f"Saved {len(vessels)} vessels to {file_path}")
+    except Exception as e:
+        st.error(f"Error saving vessels to {file_path}: {e}")
+
+
 # --- Helper for User Uploaded Sanctions Data Persistence ---
 def save_user_uploaded_sanctions_to_file(df, file_path):
     """Saves a DataFrame to a specified CSV for user uploads for persistence."""
@@ -398,35 +447,9 @@ if 'global_sanctions_data_store' not in st.session_state:
     }
     st.session_state.global_sanctions_data_store["User_Uploaded_Sanctions"] = load_user_uploaded_sanctions_from_file(USER_UPLOADED_SANCTIONS_CACHE_NAME)
 
-# --- NEW: Google Sheet connection and data loading ---
-def load_vessels_from_gsheets():
-    """Loads vessels from the configured Google Sheet."""
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    try:
-        df = conn.read(ttl="1h", usecols=[0, 1])
-        # Clean column names in case they have extra whitespace
-        df.columns = [col.strip().lower() for col in df.columns]
-        
-        # Filter for rows with a valid 7-digit IMO
-        df = df[df['imo'].astype(str).str.match(r'^\d{7}$')]
-        
-        return df.to_dict('records')
-    except Exception as e:
-        st.error(f"Error loading vessels from Google Sheet: {e}. Please check your Sheet URL and credentials.")
-        return []
-
-def save_vessels_to_gsheets(data):
-    """Saves a list of vessel data to the Google Sheet."""
-    conn = st.connection("gsheets", type=GSheetsConnection)
-    df = pd.DataFrame(data)
-    df.rename(columns={'name': 'name', 'imo': 'imo'}, inplace=True)
-    conn.update(worksheet="Sheet1", data=df)
-    st.success("Vessel list saved to Google Sheet successfully!")
-
-
-# Initialize session state variables, now with Google Sheets
+# --- REVERTED: Initialize my_vessels_data with local file persistence ---
 if 'my_vessels_data' not in st.session_state:
-    st.session_state.my_vessels_data = load_vessels_from_gsheets()
+    st.session_state.my_vessels_data = load_my_vessels_from_file(MY_VESSELS_CSV_NAME)
 if 'report_generated' not in st.session_state:
     st.session_state.report_generated = False
 if 'logs' not in st.session_state:
@@ -609,7 +632,7 @@ with tab2:
 
 with tab3:
     st.header("My Vessels List")
-    st.warning("Your vessel list is loaded from a Google Sheet and persists across sessions.")
+    st.warning("Your vessel list is saved to a local CSV file for persistence across sessions.")
 
     # Input to add a new vessel
     st.subheader("Add New Vessel")
@@ -623,6 +646,7 @@ with tab3:
                 if re.fullmatch(r'^\d{7}$', new_vessel_imo):
                     if not any(v['imo'] == new_vessel_imo for v in st.session_state.my_vessels_data):
                         st.session_state.my_vessels_data.append({'name': new_vessel_name, 'imo': new_vessel_imo})
+                        save_my_vessels_to_file(st.session_state.my_vessels_data, MY_VESSELS_CSV_NAME)
                         st.success(f"Added vessel: {new_vessel_name} ({new_vessel_imo})")
                         st.rerun()
                     else:
@@ -732,10 +756,10 @@ with tab3:
             
             col_save, col_export = st.columns(2)
             with col_save:
-                if st.button("Save Changes to Google Sheet"):
+                if st.button("Save Changes to My Vessels"):
                     updated_list = edited_df.to_dict('records')
                     st.session_state.my_vessels_data = updated_list
-                    save_vessels_to_gsheets(updated_list)
+                    save_my_vessels_to_file(updated_list, MY_VESSELS_CSV_NAME)
                     st.rerun()
             
             with col_export:
@@ -775,9 +799,12 @@ with tab4:
     * Click 'Clear All Fetched Sanctions Data' to remove all fetched data from memory and the local cache.
 
     **3. My Vessels Tab:**
-    * Your vessel list is now automatically loaded from and saved to a Google Sheet.
-    * Add new vessels or edit existing ones directly in the table.
-    * Click **"Save Changes to Google Sheet"** to permanently store your updates.
+    * Your vessel list is saved to a local CSV file for persistence across sessions.
+    * Add your own vessel names and IMO numbers using the 'Add New Vessel' section. 
+        Imo numbers must be exactly 7 digits.
+    * Use the 'Load Your Vessels from a File' section to upload a CSV file and populate your list.
+    * The vessel list is displayed in an interactive table where you can directly edit values or delete rows.
+    * Click **"Save Changes to My Vessels"** to permanently store your updates to the local CSV file.
     * The 'Check Sanctions Status & Update List' button compares your vessels against the most recently fetched sanctions data, highlighting any matches.
     * 'Export My Vessels List as CSV' allows you to download your current list for local storage.
 
