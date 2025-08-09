@@ -557,9 +557,20 @@ with tab2:
             original_columns = list(df_loaded_external.columns)
             cleaned_columns_map = {str(col).strip().lower(): col for col in original_columns}
             
-            imo_col_key = next((col for col in cleaned_columns_map if 'imo' in col), None)
-            name_col_key = next((col for col in cleaned_columns_map if 'vessel' in col or 'name' in col), None)
-
+            # Use a more robust search for column names
+            imo_col_key = None
+            name_col_key = None
+            
+            for pattern in ['imo number', 'imo no', 'imo']:
+                if pattern in cleaned_columns_map:
+                    imo_col_key = cleaned_columns_map[pattern]
+                    break
+            
+            for pattern in ['vessel name', 'vessel', 'name']:
+                if pattern in cleaned_columns_map:
+                    name_col_key = cleaned_columns_map[pattern]
+                    break
+            
             if imo_col_key and name_col_key:
                 df_external_processed = df_loaded_external[[name_col_key, imo_col_key]].copy()
                 df_external_processed.rename(columns={name_col_key: "Vessel Name", imo_col_key: "IMO Number"}, inplace=True)
@@ -572,7 +583,7 @@ with tab2:
                 st.success(f"External sanctions data loaded from '{uploaded_external_file.name}'. Refreshing display.")
                 st.rerun()
             else:
-                st.error(f"Uploaded file '{uploaded_external_file.name}' missing 'IMO' or 'Vessel Name' columns after cleaning. Found headers: {df_loaded_external.columns.tolist()}")
+                st.error(f"Uploaded file '{uploaded_external_file.name}' missing 'IMO' or 'Vessel Name' columns. Found headers: {original_columns}")
         except Exception as e:
             st.error(f"Error processing uploaded file '{uploaded_external_file.name}': {e}")
 
@@ -710,7 +721,7 @@ with tab4:
     **1. Sanctions Report Generator Tab:**
     * Click 'Generate New Sanctions Report'.
     * The application will then connect to various online sources (OFAC, UK, EU DMA, UANI Website) 
-        to fetch the latest vessel sanctions data.
+      to fetch the latest vessel sanctions data.
     * Animated progress and status messages will be displayed on this tab.
     * Once complete, the fetched data will be automatically available in the 'Sanctions Report Viewer' tab.
 
